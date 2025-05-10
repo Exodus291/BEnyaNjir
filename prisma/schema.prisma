@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Menu {
+  id                Int               @id @default(autoincrement())
+  nama              String
+  harga             Float
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  transactionItems  TransactionItem[]
+}
+
+model Transaction {
+  id           String            @id @default(uuid())
+  customerName String
+  date         DateTime          @default(now())
+  total        Float
+  foodItems    TransactionItem[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model TransactionItem {
+  id            Int         @id @default(autoincrement())
+  menuId        Int
+  menu          Menu        @relation(fields: [menuId], references: [id])
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  name          String      // Changed from nama to match controller
+  price         Float       // Changed from harga to match controller
+  quantity      Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([menuId])
+  @@index([transactionId])
+}
