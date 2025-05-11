@@ -44,6 +44,33 @@ const transactionController = {
     }
   },
 
+  getTransactionById: async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const transaction = await prisma.transaction.findUnique({
+      where: { id },
+      include: {
+        foodItems: {
+          include: {
+            menu: true
+          }
+        }
+      }
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaksi tidak ditemukan' });
+    }
+
+    res.json(transaction);
+  } catch (error) {
+    console.error('Get transaction by ID error:', error);
+    res.status(500).json({ error: 'Gagal mengambil transaksi', details: error.message });
+  }
+},
+
+
   getAllTransactions: async (req, res) => {
     try {
       const transactions = await prisma.transaction.findMany({
@@ -62,39 +89,63 @@ const transactionController = {
     }
   },
 
-  updateTransaction: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { customerName, foodItems, total, date } = req.body;
+// Mengupdate transaksi berdasarkan ID
+updateTransaction: async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customerName, foodItems, total, date } = req.body;
 
-      const updatedTransaction = await prisma.transaction.update({
-        where: { id: id },
-        data: {
-          customerName: customerName ? sanitizeString(customerName) : undefined,
-          date: date ? new Date(date) : undefined,
-          total: total !== undefined
-            ? (typeof total === 'string' ? convertRupiahToNumber(total) : Number(total))
-            : undefined,
-          foodItems: foodItems ? {
-            deleteMany: {},
-            create: foodItems.map(item => ({
-              menuId: Number(item.id),
-              name: item.name,
-              price: Number(item.price),
-              quantity: item.quantity || 1
-            }))
-          } : undefined
-        },
-        include: {
-          foodItems: { include: { menu: true } }
-        }
-      });
+    // Validate if transaction exists
+    const existingTransaction = await prisma.transaction.findUnique({
+      where: { id }
+    });
 
-      res.json(updatedTransaction);
-    } catch (error) {
-      res.status(400).json({ error: 'Gagal update transaksi', details: error.message });
+    if (!existingTransaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
     }
-  },
+
+    // Validate if foodItems is provided and not empty
+    if (!foodItems || foodItems.length === 0) {
+      return res.status(400).json({ error: 'Food items are required' });
+    }
+
+    // Hapus TransactionItem yang lama
+    await prisma.transactionItem.deleteMany({
+      where: { transactionId: id }
+    });
+
+    // Update transaksi dengan foodItems baru
+    const updatedTransaction = await prisma.transaction.update({
+      where: { id },
+      data: {
+        customerName,
+        date: new Date(date),
+        total: Number(total),
+        foodItems: {
+          create: foodItems.map(item => ({
+            menuId: item.menuId,
+            name: item.name,
+            price: Number(item.price),
+            quantity: Number(item.quantity)
+          }))
+        }
+      },
+      include: {
+        foodItems: true // Mengembalikan foodItems yang baru setelah update
+      }
+    });
+
+    res.json(updatedTransaction);
+  } catch (error) {
+    console.error('Update transaction error:', error);
+    res.status(400).json({
+      error: 'Gagal mengupdate transaksi',
+      details: error.message
+    });
+  }
+},
+
+
 
   deleteTransaction: async (req, res) => {
     try {
