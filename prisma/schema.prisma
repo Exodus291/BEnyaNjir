@@ -21,6 +21,7 @@ model Transaction {
   customerName String
   date         DateTime          @default(now())
   total        Float
+  status       String            @default("pending")
   foodItems    TransactionItem[]
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt

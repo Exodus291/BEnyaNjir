@@ -3,7 +3,7 @@ const { convertRupiahToNumber, formatToRupiah, sanitizeString } = require('../ut
 const prisma = new PrismaClient();
 
 const transactionController = {
-  createTransaction: async (req, res) => {
+  createPendingTransaction: async (req, res) => {
     try {
       const { customerName, foodItems, total, date } = req.body;
 
@@ -16,6 +16,50 @@ const transactionController = {
           customerName: customerName || 'Guest',
           date: date ? new Date(date) : new Date(),
           total: Number(total),
+          status: 'pending',
+          foodItems: {
+            create: foodItems.map(item => ({
+              menuId: item.id,
+              name: item.name,
+              price: Number(item.price),
+              quantity: item.quantity || 1,
+            })),
+          },
+        },
+        include: {
+          foodItems: {
+            include: {
+              menu: true,
+            },
+          },
+        },
+      });
+
+      res.status(201).json(transaction);
+    } catch (error) {
+      console.error('Server error details:', error);
+      res.status(400).json({
+        error: 'Gagal membuat transaksi',
+        details: error.message,
+      });
+    }
+  },
+  
+
+    createFinalTransaction: async (req, res) => {
+    try {
+      const { customerName, foodItems, total, date } = req.body;
+
+      if (!Array.isArray(foodItems) || foodItems.length === 0) {
+        return res.status(400).json({ error: 'foodItems kosong atau tidak valid' });
+      }
+
+      const transaction = await prisma.transaction.create({
+        data: {
+          customerName: customerName || 'Guest',
+          date: date ? new Date(date) : new Date(),
+          total: Number(total),
+          status: 'final',
           foodItems: {
             create: foodItems.map(item => ({
               menuId: item.id,
@@ -44,11 +88,12 @@ const transactionController = {
     }
   },
 
-  getTransactionById: async (req, res) => {
+finalizeTransaction: async (req, res) => {
   try {
     const { id } = req.params;
-
-    const transaction = await prisma.transaction.findUnique({
+    
+    // Cek apakah transaksi ada dengan include foodItems
+    const existing = await prisma.transaction.findUnique({
       where: { id },
       include: {
         foodItems: {
@@ -59,8 +104,84 @@ const transactionController = {
       }
     });
 
-    if (!transaction) {
+    if (!existing) {
       return res.status(404).json({ error: 'Transaksi tidak ditemukan' });
+    }
+
+    if (existing.status === 'final') {
+      return res.status(400).json({ error: 'Transaksi sudah final' });
+    }
+
+    // Update status ke final dengan PATCH
+    const finalized = await prisma.transaction.update({
+      where: { id },
+      data: {
+        status: 'final',
+        ...req.body
+      },
+      include: {
+        foodItems: {
+          include: {
+            menu: true
+          }
+        }
+      }
+    });
+
+    res.json({
+      message: `Transaksi dengan ID ${id} berhasil difinalisasi`,
+      data: finalized
+    });
+  } catch (error) {
+    console.error('Finalize error:', error);
+    res.status(500).json({ 
+      error: 'Gagal memfinalisasi transaksi',
+      details: error.message 
+    });
+  }
+},
+
+
+
+  getFinalTransactions: async (req, res) => {
+  try {
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        status: 'final', // Ambil transaksi dengan status 'final'
+      },
+      include: {
+        foodItems: true, // Include foodItems yang terkait
+      },
+    });
+
+    res.json(transactions);
+  } catch (error) {
+    console.error('Get final transactions error:', error);
+    res.status(500).json({ error: 'Gagal mengambil data transaksi final' });
+  }
+},
+
+
+getTransactionById: async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const transaction = await prisma.transaction.findFirst({
+      where: {
+        id,
+        status: 'pending' // hanya ambil transaksi pending
+      },
+      include: {
+        foodItems: {
+          include: {
+            menu: true
+          }
+        }
+      }
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaksi tidak ditemukan atau bukan pending' });
     }
 
     res.json(transaction);
@@ -71,9 +192,13 @@ const transactionController = {
 },
 
 
-  getAllTransactions: async (req, res) => {
+
+  getPendingTransactions: async (req, res) => {
     try {
       const transactions = await prisma.transaction.findMany({
+        where: {
+         status: 'pending', // hanya ambil transaksi pending 
+        },
         include: {
           foodItems: {
             include: {
@@ -121,6 +246,7 @@ updateTransaction: async (req, res) => {
         customerName,
         date: new Date(date),
         total: Number(total),
+        status: 'pending',
         foodItems: {
           create: foodItems.map(item => ({
             menuId: item.menuId,
@@ -147,17 +273,41 @@ updateTransaction: async (req, res) => {
 
 
 
-  deleteTransaction: async (req, res) => {
-    try {
-      const { id } = req.params;
-      await prisma.transaction.delete({
-        where: { id: id }
-      });
-      res.json({ message: 'Transaksi berhasil dihapus' });
-    } catch (error) {
-      res.status(400).json({ error: 'Gagal hapus transaksi', details: error.message });
+deleteTransaction: async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Cek apakah transaksi ada dan statusnya pending
+    const existing = await prisma.transaction.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Transaksi tidak ditemukan' });
     }
+
+    if (existing.status !== 'pending') {
+      return res.status(403).json({ error: 'Hanya transaksi pending yang bisa dihapus' });
+    }
+
+    // Hapus item-item transaksi terlebih dahulu
+    await prisma.transactionItem.deleteMany({
+      where: { transactionId: id },
+    });
+
+    // Hapus transaksi utama
+    await prisma.transaction.delete({
+      where: { id },
+    });
+
+    res.json({ message: 'Transaksi pending berhasil dihapus' });
+  } catch (error) {
+    res.status(400).json({
+      error: 'Gagal hapus transaksi',
+      details: error.message,
+    });
   }
+}
 };
 
 module.exports = transactionController;
