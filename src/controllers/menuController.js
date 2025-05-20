@@ -71,17 +71,28 @@ const menuController = {
     }
   },
 
-  // Menghapus menu
-  deleteMenu: async (req, res) => {
-    try {
-      await prisma.menu.delete({
-        where: { id: parseInt(req.params.id) },
-      });
-      res.json({ message: 'Menu berhasil dihapus' });
-    } catch (error) {
-      res.status(400).json({ error: 'Gagal menghapus menu' });
-    }
-  },
+deleteMenu: async (req, res) => {
+  const { id } = req.params;
+  const menuId = parseInt(id);
+
+  if (isNaN(menuId)) {
+    return res.status(400).json({ error: 'ID tidak valid' });
+  }
+
+  try {
+    // Ubah status menjadi inactive (soft delete)
+    await prisma.menu.update({
+      where: { id: menuId },
+      data: { status: 'inactive' },
+    });
+
+    res.json({ message: 'Menu berhasil dinonaktifkan' });
+  } catch (error) {
+    console.error('Gagal menonaktifkan menu:', error);
+    res.status(500).json({ error: 'Gagal menonaktifkan menu' });
+  }
+}
+
 };
 
 module.exports = menuController;
